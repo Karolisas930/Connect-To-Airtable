@@ -7,97 +7,103 @@ import pytesseract
 import pdf2image
 import io
 from datetime import datetime
+import pandas as pd
 
-# ---------- Airtable Configuration (from your screenshots) ----------
+# Airtable Setup
 AIRTABLE_API_KEY = "patvOXAPPzVeUU1tK.b0b961530230189b5a9bf5cd82a846b830dcefe285b93f86c402c0106b4c02cd"
 AIRTABLE_BASE_ID = "appxK32N1zW2Qw6Cj"
-AIRTABLE_RESULTS_TABLE = "tblpmHvCAPrxif10c" # Job Results
-AIRTABLE_CATEGORIES_TABLE = "tblOvfLoznhTQBjRX" # Job Categories
+AIRTABLE_RESULTS_TABLE = "tblpmHvCAPrxi1f0c"
+AIRTABLE_CATEGORIES_TABLE = "tblOvflOznhTQ8jRX"
+AIRTABLE_SUBCATEGORIES_TABLE = "tblX6BVMP02pQtML2" # Replace with your actual Subcategory Table ID
 
 result_table = Table(AIRTABLE_API_KEY, AIRTABLE_BASE_ID, AIRTABLE_RESULTS_TABLE)
 category_table = Table(AIRTABLE_API_KEY, AIRTABLE_BASE_ID, AIRTABLE_CATEGORIES_TABLE)
+subcategory_table = Table(AIRTABLE_API_KEY, AIRTABLE_BASE_ID, AIRTABLE_SUBCATEGORIES_TABLE)
 
-# ---------- Load CLIP ----------
+# Load CLIP model
 device = "cuda" if torch.cuda.is_available() else "cpu"
 model, preprocess = clip.load("ViT-B/32", device=device)
 
-# ---------- Load Categories from Airtable ----------
-st.title("🧠 AI Job Classifier (Image + PDF)")
-with st.spinner("🔄 Loading categories from Airtable..."):
-    records = category_table.all()
-    labels = []
-    for r in records:
-        cat = r["fields"].get("category")
-        subcat = r["fields"].get("subcategory")
-        if cat and subcat:
-            labels.append(f"{cat}: {subcat}")
+# Load categories and subcategories from Airtable
+@st.cache_data
+def load_labels():
+    categories = []
+    for r in category_table.all():
+        name = r.get("fields", {}).get("Category_Name_EN", "")
+        if name:
+            categories.append(name)
 
-# ---------- File Upload ----------
-uploaded_file = st.file_uploader("📎 Upload an image or PDF", type=["jpg", "jpeg", "png", "pdf"])
+    subcategories = []
+    for r in subcategory_table.all():
+        name = r.get("fields", {}).get("Subcategory_Name_EN", "")
+        if name:
+            subcategories.append(name)
 
-def extract_text_from_image(image):
-    return pytesseract.image_to_string(image)
+    return categories, subcategories
 
-def extract_text_from_pdf(uploaded_pdf):
-    images = pdf2image.convert_from_bytes(uploaded_pdf.read())
-    text = ""
-    for img in images:
-        text += extract_text_from_image(img) + "\n"
-    return text.strip(), images[0] # Return first page image
+categories, subcategories = load_labels()
+category_tokens = clip.tokenize(categories).to(device)
+subcategory_tokens = clip.tokenize(subcategories).to(device)
 
-if uploaded_file:
-    filename = uploaded_file.name
-    ext = filename.split('.')[-1].lower()
+# UI
+st.title("🧠 AI Job Classifier (Multi-file Image/PDF Support)")
 
-    predicted_label = ""
-    preview_img = None
-    classification_type = ""
+uploaded_files = st.file_uploader("Upload job description files", type=["pdf", "png", "jpg", "jpeg"], accept_multiple_files=True)
 
-    if ext in ["jpg", "jpeg", "png"]:
-        st.image(uploaded_file, caption="Uploaded Image", use_column_width=True)
-        image = Image.open(uploaded_file).convert("RGB")
-        preview_img = image
+results = []
 
-        with st.spinner("🧠 Classifying image..."):
-            image_input = preprocess(image).unsqueeze(0).to(device)
-            text_inputs = clip.tokenize(labels).to(device)
-            with torch.no_grad():
-                image_features = model.encode_image(image_input)
-                text_features = model.encode_text(text_inputs)
-                similarity = (image_features @ text_features.T).squeeze(0)
-                top_idx = similarity.argmax().item()
-                predicted_label = labels[top_idx]
-                classification_type = "Image"
+def extract_first_image(file):
+    if file.type == "application/pdf":
+        return pdf2image.convert_from_bytes(file.read())[0]
+    return Image.open(file)
 
-    elif ext == "pdf":
-        with st.spinner("📖 Extracting text from PDF..."):
-            extracted_text, first_page = extract_text_from_pdf(uploaded_file)
-            preview_img = first_page
-            st.image(first_page, caption="Preview (Page 1)", use_column_width=True)
-            st.text_area("📝 Extracted Text", extracted_text, height=200)
+def classify_content(image):
+    text = pytesseract.image_to_string(image)
+    image_input = preprocess(image).unsqueeze(0).to(device)
 
-            with st.spinner("🔍 Matching text to category..."):
-                text_inputs = clip.tokenize(labels).to(device)
-                with torch.no_grad():
-                    text_features = model.encode_text(text_inputs)
-                    query_text = clip.tokenize([extracted_text[:300]]).to(device)
-                    query_features = model.encode_text(query_text)
-                    similarity = (query_features @ text_features.T).squeeze(0)
-                    top_idx = similarity.argmax().item()
-                    predicted_label = labels[top_idx]
-                    classification_type = "PDF/Text"
+    with torch.no_grad():
+        text_embed = model.encode_text(clip.tokenize([text]).to(device))
+        image_embed = model.encode_image(image_input)
 
-    # ---------- Manual Adjustment ----------
-    st.subheader("✅ Suggested Category")
-    selected_label = st.selectbox("Confirm or adjust the prediction:", options=labels, index=labels.index(predicted_label))
+        combined_embed = (text_embed + image_embed) / 2
 
-    # ---------- Save to Airtable ----------
-    if st.button("📤 Save to Airtable"):
-        data = {
-            "Filename": filename,
-            "Predicted Label": selected_label,
-            "Source": classification_type,
+        cat_probs = (combined_embed @ model.encode_text(category_tokens).T).softmax(dim=-1)
+        subcat_probs = (combined_embed @ model.encode_text(subcategory_tokens).T).softmax(dim=-1)
+
+        top_cat = categories[cat_probs.argmax().item()]
+        top_subcat = subcategories[subcat_probs.argmax().item()]
+
+    return text, top_cat, top_subcat
+
+if uploaded_files:
+    for file in uploaded_files:
+        image = extract_first_image(file)
+        st.image(image, caption=f"Preview: {file.name}", use_column_width=True)
+
+        with st.spinner("Classifying..."):
+            text, cat, subcat = classify_content(image)
+
+        st.markdown(f"**Predicted Category:** `{cat}`")
+        st.markdown(f"**Predicted Subcategory:** `{subcat}`")
+
+        results.append({
+            "Filename": file.name,
+            "Text": text[:300], # Truncated preview
+            "Category": cat,
+            "Subcategory": subcat,
             "Timestamp": datetime.now().isoformat()
-        }
-        result_table.create(data)
-        st.success("Saved to Airtable ✅")
+        })
+
+        result_table.create({
+            "Text": text,
+            "Predicted_Category": cat,
+            "Predicted_Subcategory": subcat,
+            "Timestamp": datetime.now().isoformat()
+        })
+
+    # Export results to CSV
+    df = pd.DataFrame(results)
+    st.success("✅ All files processed and saved to Airtable!")
+
+    csv = df.to_csv(index=False).encode("utf-8")
+    st.download_button("⬇️ Download Results CSV", data=csv, file_name="job_results.csv", mime="text/csv")
