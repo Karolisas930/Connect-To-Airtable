@@ -23,12 +23,8 @@ subcategory_table = Table(AIRTABLE_API_KEY, AIRTABLE_BASE_ID, AIRTABLE_SUBCATEGO
 device = "cuda" if torch.cuda.is_available() else "cpu"
 model, preprocess = clip.load("ViT-B/32", device=device)
 
-# Truncate long strings to avoid CLIP context length error (max 77 tokens)
-MAX_CHARS = 75
-categories = [c[:MAX_CHARS] for c in categories]
-subcategories = [s[:MAX_CHARS] for s in subcategories]
-
-def truncate_label(label, max_length=512):
+# Truncate long strings to avoid CLIP's 77-token limit (70-char safety margin)
+def truncate_label(label, max_length=70):
     return label[:max_length]
 
 # Load categories and subcategories from Airtable
