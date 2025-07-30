@@ -1,2 +1,1 @@
-pip install streamlit torch torchvision ftfy regex tqdm pyairtable
-pip install git+https://github.com/openai/CLIP.git
+pip install streamlit torch torchvision ftfy regex pytesseract pdf2image pyairtable
