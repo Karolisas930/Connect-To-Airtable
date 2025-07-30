@@ -5,7 +5,6 @@ from PIL import Image
 from pyairtable import Table
 import pytesseract
 import pdf2image
-import io
 from datetime import datetime
 import pandas as pd
 
@@ -24,6 +23,9 @@ subcategory_table = Table(AIRTABLE_API_KEY, AIRTABLE_BASE_ID, AIRTABLE_SUBCATEGO
 device = "cuda" if torch.cuda.is_available() else "cpu"
 model, preprocess = clip.load("ViT-B/32", device=device)
 
+def truncate_label(label, max_length=512):
+    return label[:max_length]
+
 # Load categories and subcategories from Airtable
 @st.cache_data
 def load_labels():
@@ -31,13 +33,13 @@ def load_labels():
     for r in category_table.all():
         name = r.get("fields", {}).get("Category_Name_EN", "")
         if name:
-            categories.append(name)
+            categories.append(truncate_label(name))
 
     subcategories = []
     for r in subcategory_table.all():
         name = r.get("fields", {}).get("Subcategory_Name_EN", "")
         if name:
-            subcategories.append(name)
+            subcategories.append(truncate_label(name))
 
     return categories, subcategories
 
@@ -46,11 +48,9 @@ category_tokens = clip.tokenize(categories).to(device)
 subcategory_tokens = clip.tokenize(subcategories).to(device)
 
 # UI
-st.set_page_config(page_title="Job Classifier AI", layout="wide")
-st.title("📂 AI-Powered Job Classification")
-st.markdown("Upload your job description as images or PDFs, and this tool will classify them using AI.")
+st.title("🧠 AI Job Classifier (Multi-file Image/PDF Support)")
 
-uploaded_files = st.file_uploader("📤 Upload files (images or PDFs)", type=["pdf", "png", "jpg", "jpeg"], accept_multiple_files=True)
+uploaded_files = st.file_uploader("Upload job description files", type=["pdf", "png", "jpg", "jpeg"], accept_multiple_files=True)
 
 results = []
 
@@ -66,6 +66,7 @@ def classify_content(image):
     with torch.no_grad():
         text_embed = model.encode_text(clip.tokenize([text]).to(device))
         image_embed = model.encode_image(image_input)
+
         combined_embed = (text_embed + image_embed) / 2
 
         cat_probs = (combined_embed @ model.encode_text(category_tokens).T).softmax(dim=-1)
@@ -78,36 +79,32 @@ def classify_content(image):
 
 if uploaded_files:
     for file in uploaded_files:
-        try:
-            image = extract_first_image(file)
-            st.image(image, caption=f"Preview: {file.name}", use_column_width=True)
+        image = extract_first_image(file)
+        st.image(image, caption=f"Preview: {file.name}", use_column_width=True)
 
-            with st.spinner("🔍 Analyzing and classifying..."):
-                text, cat, subcat = classify_content(image)
+        with st.spinner("Classifying..."):
+            text, cat, subcat = classify_content(image)
 
-            st.markdown(f"🧠 **Predicted Category:** `{cat}`")
-            st.markdown(f"🧠 **Predicted Subcategory:** `{subcat}`")
+        st.markdown(f"**Predicted Category:** `{cat}`")
+        st.markdown(f"**Predicted Subcategory:** `{subcat}`")
 
-            results.append({
-                "Filename": file.name,
-                "Text": text[:300],
-                "Category": cat,
-                "Subcategory": subcat,
-                "Timestamp": datetime.now().isoformat()
-            })
+        results.append({
+            "Filename": file.name,
+            "Text": text[:300],
+            "Category": cat,
+            "Subcategory": subcat,
+            "Timestamp": datetime.now().isoformat()
+        })
 
-            result_table.create({
-                "Text": text,
-                "Predicted_Category": cat,
-                "Predicted_Subcategory": subcat,
-                "Timestamp": datetime.now().isoformat()
-            })
-
-        except Exception as e:
-            st.error(f"❌ Error processing file `{file.name}`: {e}")
+        result_table.create({
+            "Text": text,
+            "Predicted_Category": cat,
+            "Predicted_Subcategory": subcat,
+            "Timestamp": datetime.now().isoformat()
+        })
 
     df = pd.DataFrame(results)
-    st.success("✅ All files processed and results saved to Airtable!")
+    st.success("✅ All files processed and saved to Airtable!")
 
     csv = df.to_csv(index=False).encode("utf-8")
     st.download_button("⬇️ Download Results CSV", data=csv, file_name="job_results.csv", mime="text/csv")
