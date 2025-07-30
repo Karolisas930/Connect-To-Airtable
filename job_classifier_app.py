@@ -1,3 +1,4 @@
+
 import streamlit as st
 import torch
 import clip
@@ -23,7 +24,6 @@ subcategory_table = Table(AIRTABLE_API_KEY, AIRTABLE_BASE_ID, AIRTABLE_SUBCATEGO
 device = "cuda" if torch.cuda.is_available() else "cpu"
 model, preprocess = clip.load("ViT-B/32", device=device)
 
-# Truncate long strings to avoid CLIP's 77-token limit (70-char safety margin)
 def truncate_label(label, max_length=70):
     return label[:max_length]
 
@@ -41,6 +41,13 @@ def load_labels():
         name = r.get("fields", {}).get("Subcategory_Name_EN", "")
         if name:
             subcategories.append(truncate_label(name))
+
+    # Debug print token lengths
+    for i, cat in enumerate(categories):
+        print(f"Category [{i}]: '{cat}' - token count: {len(clip.tokenize([cat])[0])}")
+
+    for i, cat in enumerate(subcategories):
+        print(f"Subcategory [{i}]: '{cat}' - token count: {len(clip.tokenize([cat])[0])}")
 
     return categories, subcategories
 
