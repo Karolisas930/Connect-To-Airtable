@@ -1,0 +1,8 @@
+streamlit
+torch
+torchvision
+ftfy
+regex
+pytesseract
+pdf2image
+pyairtable
