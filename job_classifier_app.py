@@ -10,9 +10,9 @@ from datetime import datetime
 
 # ---------- Airtable Configuration (from your screenshots) ----------
 AIRTABLE_API_KEY = "patvOXAPPzVeUU1tK.b0b961530230189b5a9bf5cd82a846b830dcefe285b93f86c402c0106b4c02cd"
-AIRTABLE_BASE_ID = "appxK32N1zW2Qw6GJ"
-AIRTABLE_RESULTS_TABLE = "tblX6BWMPp2PQtpML2" # Job Results
-AIRTABLE_CATEGORIES_TABLE = "tbl0vfLoznHT0BjRX" # Job Categories
+AIRTABLE_BASE_ID = "appxK32N1zW2Qw6Cj"
+AIRTABLE_RESULTS_TABLE = "tblpmHvCAPrxif10c" # Job Results
+AIRTABLE_CATEGORIES_TABLE = "tblOvfLoznhTQBjRX" # Job Categories
 
 result_table = Table(AIRTABLE_API_KEY, AIRTABLE_BASE_ID, AIRTABLE_RESULTS_TABLE)
 category_table = Table(AIRTABLE_API_KEY, AIRTABLE_BASE_ID, AIRTABLE_CATEGORIES_TABLE)
